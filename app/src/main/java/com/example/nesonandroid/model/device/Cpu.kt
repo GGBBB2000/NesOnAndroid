@@ -3,6 +3,7 @@ package com.example.nesonandroid.model.device
 import com.example.nesonandroid.Instruction
 import kotlin.experimental.and
 import kotlin.experimental.or
+import kotlin.experimental.xor
 
 final class Cpu(bus: CpuBus) {
     private var bus: CpuBus
@@ -86,7 +87,7 @@ final class Cpu(bus: CpuBus) {
         }
     }
 
-    private fun bitTest(data: Byte, index: Int) : Boolean {
+    private fun bitTest(data: Byte, index: Int): Boolean {
         // N V 1 B D I Z C
         return (data and (1 shl index).toByte()) != 0.toByte()
     }
@@ -112,7 +113,7 @@ final class Cpu(bus: CpuBus) {
         this.x = 0
         this.y = 0
         this.pc = 0xFFFC
-        this.sp = 0xFF.toByte()
+        this.sp = 0.toByte()
         this.p = 0b00100000
 
         this.pc = fetchAddr()
@@ -655,8 +656,8 @@ final class Cpu(bus: CpuBus) {
         }
     }
 
-    private fun exec(decResult: Triple<Instruction, Addressing, Int>) {
-        val operandAddr = when (decResult.second) {
+    private fun fetchOperandAdder(addressing: Addressing): Int {
+        return when (addressing) {
             Addressing.ABS -> fetchAddr()
             Addressing.ABSX -> fetchAddr() + this.x
             Addressing.ABSY -> fetchAddr() + this.y
@@ -670,50 +671,215 @@ final class Cpu(bus: CpuBus) {
             }
             Addressing.INDY -> {
                 val zeroLow = fetch().toInt() and 0b1111111
-                val tmpAddr = readAddr(zeroLow)
-                tmpAddr + this.y
+                val tmpAdder = readAddr(zeroLow)
+                tmpAdder + this.y
             }
             Addressing.ABSIN -> {
-                val absAddr = fetchAddr()
-                readAddr(absAddr)
+                val absAdder = fetchAddr()
+                readAddr(absAdder)
             }
             else -> {
-                null
+                error("アドレスを返せません")
             }
         }
+    }
 
-        when (decResult.first) {
+    private fun push(byte: Byte) {
+        writeByte(byte, (0x100 + this.sp.toInt() and 0xFF))
+        this.sp = ((this.sp.toInt().toInt() and 0xFF) - 1).toByte()
+    }
+
+    private fun pop(): Byte {
+        this.sp = ((this.sp.toInt().toInt() and 0xFF) + 1).toByte()
+        return readByte(0x100 + this.sp.toInt() and 0xFF)
+    }
+
+    private fun exec(decResult: Triple<Instruction, Addressing, Int>) {
+        val addressing = decResult.second
+        val instruction = decResult.first
+        when (instruction) {
+            Instruction.ADC -> {
+                val value = when (addressing) {
+                    Addressing.IMM -> {
+                        fetch()
+                    }
+                    else -> {
+                        readByte(fetchOperandAdder(addressing))
+                    }
+                }
+                // N V 1 B D I Z C
+                val diff = (this.a < 0) == (value < 0)
+                this.a = (this.a + value).toByte() and 0xFF.toByte()
+                +if (bitTest(this.p, 0)) {
+                    1.toByte()
+                } else {
+                    0.toByte()
+                }
+                setNegative(this.a < 0)
+                setZero(this.a == 0.toByte())
+                setOverflow(diff and (this.a < 0 != value < 0))
+            }
+            Instruction.SBC -> {
+                val value = when (addressing) {
+                    Addressing.IMM -> {
+                        fetch()
+                    }
+                    else -> {
+                        readByte(fetchOperandAdder(addressing))
+                    }
+                }
+                // N V 1 B D I Z C
+                val diff = (this.a < 0) != (value < 0)
+                val isNegative = value < 0
+                this.a = (this.a - value).toByte() and 0xFF.toByte()
+                -if (bitTest(this.p, 0)) {
+                    0.toByte()
+                } else {
+                    1.toByte()
+                }
+                setNegative(this.a < 0)
+                setZero(this.a == 0.toByte())
+                setOverflow(diff and (isNegative == (this.a < 0)))
+            }
+            Instruction.AND -> {
+                val value = when (addressing) {
+                    Addressing.IMM -> {
+                        fetch()
+                    }
+                    else -> {
+                        readByte(fetchOperandAdder(addressing))
+                    }
+                }
+                this.a = this.a and value
+                setNegative(this.a < 0)
+                setZero(this.a == 0.toByte())
+            }
+            Instruction.ORA -> {
+                val value = when (addressing) {
+                    Addressing.IMM -> {
+                        fetch()
+                    }
+                    else -> {
+                        readByte(fetchOperandAdder(addressing))
+                    }
+                }
+                this.a = this.a or value
+                setNegative(this.a < 0)
+                setZero(this.a == 0.toByte())
+            }
+            Instruction.EOR -> {
+                val value = when (addressing) {
+                    Addressing.IMM -> {
+                        fetch()
+                    }
+                    else -> {
+                        readByte(fetchOperandAdder(addressing))
+                    }
+                }
+                this.a = this.a xor value
+                setNegative(this.a < 0)
+                setZero(this.a == 0.toByte())
+            }
+            Instruction.ASL -> {
+                var operandAdder: Int? = null
+                val value = when (addressing) {
+                    Addressing.ACC -> this.a
+                    else -> {
+                        operandAdder = fetchOperandAdder(addressing)
+                        readByte(operandAdder)
+                    }
+                }
+                setCarry(value < 0)
+                val result = (value.toInt() and 0xFF) shl 1
+                setZero(result == 0)
+                setNegative(result < 0)
+                if (operandAdder != null) {
+                    writeByte(result.toByte(), operandAdder)
+                } else {
+                    this.a = result.toByte()
+                }
+            }
+            Instruction.LSR -> {
+                var operandAdder: Int? = null
+                val value = when (addressing) {
+                    Addressing.ACC -> this.a
+                    else -> {
+                        operandAdder = fetchOperandAdder(addressing)
+                        readByte(operandAdder)
+                    }
+                }
+                setCarry(value < 0)
+                val result = (value.toInt() and 0xFF) ushr 1
+                setZero(result == 0)
+                setNegative(result < 0)
+                if (operandAdder != null) {
+                    writeByte(result.toByte(), operandAdder)
+                } else {
+                    this.a = result.toByte()
+                }
+            }
+            Instruction.ROL -> {
+                TODO("not implemented")
+            }
+            Instruction.ROR -> {
+                TODO("not implemented")
+            }
+            Instruction.INC -> {
+                val adder = fetchOperandAdder(addressing)
+                val result = (readByte(adder).toInt() and 0xFF + 1).toByte()
+                writeByte(result, adder)
+            }
+            Instruction.DEC -> {
+                val adder = fetchOperandAdder(addressing)
+                val result = (readByte(adder).toInt() and 0xFF - 1).toByte()
+                writeByte(result, adder)
+            }
             Instruction.INX -> {
-                assert(operandAddr != null)
                 this.x++
                 setZero(this.x == 0.toByte())
                 setNegative(this.x < 0)
             }
             Instruction.DEX -> {
-                assert(operandAddr != null)
                 this.x--
                 setZero(this.x == 0.toByte())
                 setNegative(this.x < 0)
             }
             Instruction.INY -> {
-                assert(operandAddr != null)
                 this.y++
                 setZero(this.y == 0.toByte())
                 setNegative(this.y < 0)
             }
             Instruction.DEY -> {
-                assert(operandAddr != null)
                 this.y--
                 setZero(this.y == 0.toByte())
                 setNegative(this.y < 0)
             }
+            Instruction.CLC -> {
+                // N V 1 B D I Z C
+                setCarry(false)
+            }
+            Instruction.SEC -> {
+                setCarry(true)
+            }
+            Instruction.CLI -> {
+                setInterrupt(false)
+            }
             Instruction.SEI -> {
                 //Set Interrupt
-                this.p = this.p or 0b100
+                setInterrupt(true)
+            }
+            Instruction.CLD -> {
+                setDecimal(false)
+            }
+            Instruction.SED -> {
+                setDecimal(true)
+            }
+            Instruction.CLV -> {
+                setOverflow(false)
             }
             Instruction.LDA -> {
                 // Load A from M
-                val value = when (decResult.second) {
+                val value = when (addressing) {
                     Addressing.ACC -> {
                         this.a
                     }
@@ -721,7 +887,7 @@ final class Cpu(bus: CpuBus) {
                         fetch()
                     }
                     else -> {
-                        readByte(operandAddr!!)
+                        readByte(fetchOperandAdder(addressing))
                     }
                 }
                 this.a = value;
@@ -730,7 +896,7 @@ final class Cpu(bus: CpuBus) {
             }
             Instruction.LDX -> {
                 //Load X from M
-                val value = when (decResult.second) {
+                val value = when (addressing) {
                     Addressing.ACC -> {
                         this.x
                     }
@@ -738,7 +904,7 @@ final class Cpu(bus: CpuBus) {
                         fetch()
                     }
                     else -> {
-                        readByte(operandAddr!!)
+                        readByte(fetchOperandAdder(addressing))
                     }
                 }
                 this.x = value;
@@ -747,7 +913,7 @@ final class Cpu(bus: CpuBus) {
             }
             Instruction.LDY -> {
                 //Load Y from M
-                val value = when (decResult.second) {
+                val value = when (addressing) {
                     Addressing.ACC -> {
                         this.y
                     }
@@ -755,7 +921,7 @@ final class Cpu(bus: CpuBus) {
                         fetch()
                     }
                     else -> {
-                        readByte(operandAddr!!)
+                        readByte(fetchOperandAdder(addressing))
                     }
                 }
                 this.y = value;
@@ -764,46 +930,121 @@ final class Cpu(bus: CpuBus) {
             }
             Instruction.STA -> {
                 // Store A to M
-                assert (operandAddr != null)
-                writeByte(this.a, operandAddr!!)
+                writeByte(this.a, fetchOperandAdder(addressing))
             }
             Instruction.STX -> {
                 // Store X to M
-                assert (operandAddr != null)
-                writeByte(this.x, operandAddr!!)
+                writeByte(this.x, fetchOperandAdder(addressing))
             }
             Instruction.STY -> {
                 // Store Y to M
-                assert (operandAddr != null)
-                writeByte(this.y, operandAddr!!)
+                writeByte(this.y, fetchOperandAdder(addressing))
             }
             Instruction.TXS -> {
                 // Transfer X to S
                 this.sp = this.x
             }
-            Instruction.BNE -> {
+            Instruction.BCC -> {
                 // N V 1 B D I Z C
-                assert(operandAddr != null)
-                if (!bitTest(this.p, 7)) {
-                    this.pc = operandAddr!!
+                if (!bitTest(this.p, 0)) {
+                    this.pc = fetchOperandAdder(addressing)
+                } else {
+                    this.pc++
                 }
             }
+            Instruction.BCS -> {
+                // N V 1 B D I Z C
+                if (bitTest(this.p, 0)) {
+                    this.pc = fetchOperandAdder(addressing)
+                } else {
+                    this.pc++
+                }
+            }
+            Instruction.BEQ -> {
+                // N V 1 B D I Z C
+                if (bitTest(this.p, 1)) {
+                    this.pc = fetchOperandAdder(addressing)
+                } else {
+                    this.pc++
+                }
+            }
+            Instruction.BNE -> {
+                // N V 1 B D I Z C
+                if (!bitTest(this.p, 1)) {
+                    this.pc = fetchOperandAdder(addressing)
+                } else {
+                    this.pc++
+                }
+            }
+            Instruction.BVC -> {
+                // N V 1 B D I Z C
+                if (!bitTest(this.p, 6)) {
+                    this.pc = fetchOperandAdder(addressing)
+                } else {
+                    this.pc++
+                }
+            }
+            Instruction.BPL -> {
+                // N V 1 B D I Z C
+                if (!bitTest(this.p, 7)) {
+                    this.pc = fetchOperandAdder(addressing)
+                } else {
+                    this.pc++
+                }
+            }
+            Instruction.BVS -> {
+                // N V 1 B D I Z C
+                if (bitTest(this.p, 6)) {
+                    this.pc = fetchOperandAdder(addressing)
+                } else {
+                    this.pc++
+                }
+            }
+            Instruction.BMI -> {
+                // N V 1 B D I Z C
+                if (bitTest(this.p, 7)) {
+                    this.pc = fetchOperandAdder(addressing)
+                } else {
+                    this.pc++
+                }
+            }
+            Instruction.BIT -> {
+                // N V 1 B D I Z C
+                val adder = fetchOperandAdder(addressing)
+                val value = readByte(adder)
+                val result = this.a and value
+                setZero(result == 0.toByte())
+                setNegative(bitTest(value, 7))
+                setOverflow(bitTest(value, 6))
+            }
             Instruction.JMP -> {
-                assert(operandAddr != null)
-                this.pc = operandAddr!!
+                this.pc = fetchOperandAdder(addressing)
+            }
+            Instruction.JSR -> {
+                val adder = fetchOperandAdder(addressing)
+                val upperByte = (((this.pc - 1) and 0xFF00) shr 8).toByte()
+                val lowerByte = ((this.pc - 1) and 0xFF).toByte()
+                push(upperByte)
+                push(lowerByte)
+
+            }
+            Instruction.RTS -> {
+                val lowerByte = (pop().toInt()) and 0xFF
+                val upperByte = ((pop().toInt()) and 0xFF) shl 8
+                this.pc = upperByte + lowerByte + 1
             }
             else -> {
-                TODO("unimplemented")
+                TODO("unimplemented ${decResult.first}")
             }
         }
 
     }
 
-    public fun run() : Int {
+    public fun run(): Int {
         val opcode = fetch().toInt() and 0b11111111
         val decResult = decode(opcode)
         exec(decResult)
-        //println("${decResult.first}, ${this.pc}")
+        // println("${decResult.first}, ${this.pc}")
         return decResult.third
     }
 }

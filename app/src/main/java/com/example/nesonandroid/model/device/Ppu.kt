@@ -22,9 +22,9 @@ final class Ppu(rom: Rom) {
     private var chrRom = rom
     private var accessAddr = 0x0
     private var vram = Ram(0x1F30)
-    private var screen = Array(256 * 240) {0xFF0000FF.toInt()}
+    private var screen = Array(256 * 240) { 0xFF000000.toInt() }
 
-        private val palette: Array<Int> = arrayOf(
+    private val palette: Array<Int> = arrayOf(
         0xFF808080.toInt(), 0xFF003DA6.toInt(), 0xFF0012B0.toInt(), 0xFF440096.toInt(),
         0xFFA1005E.toInt(), 0xFFC70028.toInt(), 0xFFBA0600.toInt(), 0xFF8C1700.toInt(),
         0xFF5C2F00.toInt(), 0xFF104500.toInt(), 0xFF054A00.toInt(), 0xFF00472E.toInt(),
@@ -123,7 +123,7 @@ final class Ppu(rom: Rom) {
             else -> error("無効なネームテーブル ${nameTable}")
         }
         for (index in 0 until 256) {
-            val x = (vScroll +  index) % 255
+            val x = (vScroll + index) % 255
             // ネームテーブル(今テーブル0)から座標(x, y)にあるスプライト番号を取ってくる
             // ネームテーブルの1タイルは8*8ピクセルであることに注意
             val spriteNum = readFromVRam(nameTableAdder + x / 8 + ((line - 1) / 8) * 32)
@@ -134,7 +134,6 @@ final class Ppu(rom: Rom) {
             var attribute = readFromVRam(attributeTableAdder + attrTableIndex)
             //  スプライトから色情報を抽出(パレットから色を選択する)
             // attributeが４色の色情報を持っているので, スプライトのインデックスを見て色を選択
-            // TODO paletteIndexのx, yがおかしい
             val paletteIndex = getSpriteColorInfo(spriteNum.toInt(), x % 8, y % 8)
 
             val color = palette[readFromVRam(0x3F00 + paletteIndex).toInt()]
@@ -145,11 +144,19 @@ final class Ppu(rom: Rom) {
         println()
     }
 
-    private fun getSpriteColorInfo(spriteNum: Int, x: Int, y: Int) : Int {
+    private fun getSpriteColorInfo(spriteNum: Int, x: Int, y: Int): Int {
         val rightLine = readFromVRam(spriteNum * 16 + y)
         val leftLine = readFromVRam(spriteNum * 16 + 8 + y)
-        var value = if (bitTest(leftLine, 7 - x)) {0b10} else {0b00}
-        value += if (bitTest(rightLine, 7 - x)) {0b01} else {0b00}
+        var value = if (bitTest(leftLine, 7 - x)) {
+            0b10
+        } else {
+            0b00
+        }
+        value += if (bitTest(rightLine, 7 - x)) {
+            0b01
+        } else {
+            0b00
+        }
         return value
     }
 
@@ -174,10 +181,12 @@ final class Ppu(rom: Rom) {
         println(line)
     }
 
-    public fun getScreen() : Array<Int> {
+    public fun getScreen(): Array<Int> {
         screenEnable = false
         return screen
     }
 
-    public fun isScreenEnable() : Boolean {return screenEnable}
+    public fun isScreenEnable(): Boolean {
+        return screenEnable
+    }
 }
